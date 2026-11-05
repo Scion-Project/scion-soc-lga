@@ -3,14 +3,14 @@
 HakiOS (Scion's XNU kernel) on the Google Tensor G5, the SoC of the Pixel 10 (`frankel`), 10 Pro (`blazer`), 10 Pro XL
 (`mustang`) and 10 Pro Fold (`rango`). This is the layer they share: the SoC's facts (`soc.conf`, `configs/lga.config`) and
 the **boot shim** that starts HakiOS on a Tensor G5 without a UEFI (`shim/`). The phone's own repository is
-[Scion-Project/hakios-frankel](https://github.com/Scion-Project/hakios-frankel); both are checked out inside the kernel's
+[Scion-Project/scion-frankel](https://github.com/Scion-Project/scion-frankel); both are checked out inside the kernel's
 common repository, [Scion-Project/scion-kernel](https://github.com/Scion-Project/scion-kernel), by
 `tools/hakios-device.py sync` (`socs/lga`, `devices/frankel`), as `devices/manifest.conf` names them.
 
 > **Nothing here has run on a phone.** The shim, the loader's platform and the kernel's half are checked in QEMU (below)
 > and on the host; on a Pixel 10 they are untested. Running them needs an **unlocked boot loader, and unlocking a Pixel
 > wipes it** (`fastboot flashing unlock` erases all user data). Use a second phone, or decide on the wipe knowingly:
-> [hakios-frankel's README](https://github.com/Scion-Project/hakios-frankel#before-anything-the-phones-data) says what it
+> [scion-frankel's README](https://github.com/Scion-Project/scion-frankel#before-anything-the-phones-data) says what it
 > takes.
 
 | Path | What |
@@ -121,7 +121,7 @@ exercised here (xnuloader's `core_shift = 8`, the POCO's, is); nor anything of t
 ## Bring-up checklist: the SoC's part
 
 What the first runs on a phone have to show about the Tensor G5 itself, in order (the phone's own steps, and how to run
-them, are [hakios-frankel's](https://github.com/Scion-Project/hakios-frankel#bring-up-in-order)). Each is a line the shim,
+them, are [scion-frankel's](https://github.com/Scion-Project/scion-frankel#bring-up-in-order)). Each is a line the shim,
 the loader or the kernel prints, on the UART and on the screen.
 
 | # | What | Seen as | If not |
