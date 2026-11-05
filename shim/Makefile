@@ -1,6 +1,6 @@
 # The Tensor G5's boot shim (README.md, "The boot shim"): shim.bin, an arm64 Linux Image that starts xnuloader without a UEFI.
 # Needs LLVM (clang, ld.lld, llvm-objcopy for an ELF target: Apple's clang compiles, Homebrew's llvm links) and the common
-# repository around it (socs/lga in hackios-xnu-kernel): the UEFI declarations are xnuloader/efi.h, the loader's own.
+# repository around it (socs/lga in scion-kernel): the UEFI declarations are xnuloader/efi.h, the loader's own.
 #
 #   make            shim.bin
 #   make test       the device-tree and memory-map host test (fdt-test), on tests/*.dts

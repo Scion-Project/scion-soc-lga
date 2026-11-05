@@ -4,7 +4,7 @@ HakiOS (Scion's XNU kernel) on the Google Tensor G5, the SoC of the Pixel 10 (`f
 (`mustang`) and 10 Pro Fold (`rango`). This is the layer they share: the SoC's facts (`soc.conf`, `configs/lga.config`) and
 the **boot shim** that starts HakiOS on a Tensor G5 without a UEFI (`shim/`). The phone's own repository is
 [Scion-Project/hakios-frankel](https://github.com/Scion-Project/hakios-frankel); both are checked out inside the kernel's
-common repository, [Scion-Project/hackios-xnu-kernel](https://github.com/Scion-Project/hackios-xnu-kernel), by
+common repository, [Scion-Project/scion-kernel](https://github.com/Scion-Project/scion-kernel), by
 `tools/hakios-device.py sync` (`socs/lga`, `devices/frankel`), as `devices/manifest.conf` names them.
 
 > **Nothing here has run on a phone.** The shim, the loader's platform and the kernel's half are checked in QEMU (below)
