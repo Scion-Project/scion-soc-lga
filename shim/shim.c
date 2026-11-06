@@ -1180,7 +1180,7 @@ shim_main(const void *fdt)
 	const char *probe = bootarg("scion.probe=");
 	const char *kick = bootarg("scion.kick=");
 	int want_kick = kick && *kick == '1';
-	kick_on = want_kick && !probe;        /* a probe run starts frames only where it says so */
+	kick_on = want_kick && !probe && is_lga();      /* a probe run starts frames only where it says so */
 	if (is_lga() && !probe) {
 		lga_watchdogs();
 	}
@@ -1232,8 +1232,8 @@ shim_main(const void *fdt)
 	screen_console_on();
 	if (probe) {
 		/* no payload, no loader, no watchdog touched: the display, a few seconds, the picture held, a restart */
-		if (!have_fb) {
-			halt("probe: no framebuffer");
+		if (!have_fb || !is_lga()) {
+			halt("probe: no framebuffer, or not a Tensor G5");
 		}
 		struct dpu_fb fb = { GOP_MODE.fb_base, GOP_INFO.width, GOP_INFO.height, GOP_INFO.pixels_per_scanline };
 		dpu_probe(&fb, want_kick);
