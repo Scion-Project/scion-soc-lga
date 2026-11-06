@@ -35,13 +35,14 @@ wait_ms(uint32_t ms)
 void
 dpu_cpu_report(void)
 {
-	uint64_t midr, isar1, isar2, pfr1;
-	__asm__ volatile ("mrs %0, midr_el1; mrs %1, id_aa64isar1_el1; mrs %2, id_aa64isar2_el1; mrs %3, id_aa64pfr1_el1"
-	    : "=r" (midr), "=r" (isar1), "=r" (isar2), "=r" (pfr1));
-	/* APA 4:7, API 8:11, GPA 24:27, GPI 28:31 of ISAR1; APA3 12:15, GPA3 8:11 of ISAR2; BT 3:0, MTE 11:8 of PFR1 */
-	say("cpu: midr %x isar1 %x isar2 %x pfr1 %x: pauth addr %d generic %d, bti %d, mte %d\n", midr, isar1, isar2, pfr1,
-	    ((isar1 >> 4) & 15) | ((isar1 >> 8) & 15) | ((isar2 >> 12) & 15),
-	    ((isar1 >> 24) & 15) | ((isar1 >> 28) & 15) | ((isar2 >> 8) & 15), pfr1 & 15, (pfr1 >> 8) & 15);
+	uint64_t midr, isar1, isar2, pfr0, pfr1;
+	__asm__ volatile ("mrs %0, midr_el1; mrs %1, id_aa64isar1_el1; mrs %2, id_aa64isar2_el1; mrs %3, id_aa64pfr0_el1; "
+	    "mrs %4, id_aa64pfr1_el1" : "=r" (midr), "=r" (isar1), "=r" (isar2), "=r" (pfr0), "=r" (pfr1));
+	/* APA 4:7, API 8:11, GPA 24:27, GPI 28:31 of ISAR1; APA3 12:15, GPA3 8:11 of ISAR2; SVE 35:32 of PFR0; BT 3:0, MTE 11:8, SME 27:24 of PFR1 */
+	say("cpu: midr %x pfr0 %x pfr1 %x isar1 %x isar2 %x: pauth addr %d generic %d, bti %d, mte %d, sve %d, sme %d\n", midr, pfr0,
+	    pfr1, isar1, isar2, ((isar1 >> 4) & 15) | ((isar1 >> 8) & 15) | ((isar2 >> 12) & 15),
+	    ((isar1 >> 24) & 15) | ((isar1 >> 28) & 15) | ((isar2 >> 8) & 15), pfr1 & 15, (pfr1 >> 8) & 15, (pfr0 >> 32) & 15,
+	    (pfr1 >> 24) & 15);
 }
 
 void

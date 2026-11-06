@@ -39,7 +39,7 @@ at `6f689be7fa23` (GPL-2.0: **read for facts, nothing copied**), paths below `pr
 | Watchdogs | two Google watchdogs, `google,wdt`: 0x200C4000 (24 s, a FIQ to EL3) and 0x200C5000 (30 s, the GDMC restarts the SoC). ID register 0x00 reads 0x574454 ("WDT"); control 0x08 (bit 0 enable); a write is taken after the key 0x00C0FFEE at 0x10, locked again with 0 | G `lga-base.dtsi` `watchdog_cl0/cl1`; `google-modules/soc/rdo/watchdog/google_wdt.c`, `google_wdt_local.h` |
 | Display controller | VeriSilicon DC9x00 at 0x0EE00000 (`sswrp_dpu` 0x0EC00000 + 0x200000, 1.1 MB); it reads through an SMMUv3 at 0x0ED80000. Layer 0's shadow registers: address +0x1802C (high byte +0x18030), stride +0x18044, size +0x1805C (width 15:0, height 31:16), config +0x18088 (enable bit 0, format 29:24, 0 = A8R8G8B8); the next layer 0x4000 on; output 0's start +0xB6000, its software panel start +0xB6004, the DSI 0 frame counter +0xB6434. Synopsys DSI2 host 0x0EFD8000, C/D-PHY 0x0EFC0000 | G `lga-dpu.dtsi`, `lga-smmu.dtsi`; `google-modules/display/vsi-drm/verisilicon/9x00/vs_dc_reg_fe0.h`, `vs_dc_hw.c` (`plane_set_fb`), `vs_dc_reg_be.h` |
 | Boot framebuffer | **not in any tree** (no `simple-framebuffer`, no splash region): wherever the boot loader put it. The shim finds it (below) | M, G: absent |
-| UFS | Google's host, `google,ufshc`: 0x3C400000 (HCI), 0x3C410000 (top), 0x3C700000 (PHY SRAM); behind an SMMUv3 (`inf_smmu`, identity-mapped); the boot device (`androidboot.boot_devices=3c400000.ufs`). Its rails come from the PMIC through the CPM's mailbox. The boot loader demands a `ufs0` node in its tree to add calibration to | G `lga-base.dtsi` `ufs@3c400000`, `lga-chosen.dtsi`; LKML, v1 of the mainline series |
+| UFS | Google's host, `google,ufshc`: 0x3C400000 (HCI), 0x3C410000 (top), 0x3C700000 (PHY SRAM); behind an SMMUv3 (`inf_smmu`, identity-mapped); the boot device (`androidboot.boot_devices=3c400000.ufs`). Its rails come from the PMIC through the CPM's mailbox. The boot loader demands a `ufs0` node in its tree to add calibration to. A UFSHCI 4.0 host with Google's own top block (version, card detect at +0x0/+0x4, the M-PHY firmware source in PWR_CTRL +0x100: ROM or the patched SRAM image, `google,phy-patching-mode = <2>`) that Google's driver runs in single doorbell mode (CONFIG.QT, +0x300) or with 16 queues (MCQ), 36-bit DMA whatever CAP says, initiator id 1 in every command UPIU, `AWUSER`/`ARUSER` virtual channel 1 (a TODO in its source). Its own bring-up: power domains and the PMIC's rails by the CPM, the reset GPIO, the reference clock, 125 KB of M-PHY firmware, calibration: none in this tree, so the kernel takes the host as ABL left it, read only (`hakios.ufshc.c`, entry `lga`). Whether ABL leaves it up: unknown | G `lga-base.dtsi` `ufs@3c400000`, `lga-chosen.dtsi`; G `private/google-modules/soc/rdo/drivers/ufs/` (`ufs-google.c`, `lga/ufs-platform.h`, `lga/ufs-regs-gen.h`) and `aosp/include/ufs/ufshcd.h` (the two quirks); LKML, v1 of the mainline series |
 | PMIC | Dialog/Renesas DA9188 (main) and DA9189 (sub) "AP-PMICs", driven through the CPM (Google's power manager) by mailbox (`mba-dest-channel`), not by the AP's own bus | G `lga-ap-pmic.dtsi` |
 | GPU | Imagination PowerVR DXT-48-1536 | G `google-modules/powervr`; Phoronix |
 | RAM | LPDDR5X from 0x80000000; the boot loader writes the `/memory` banks. The 4-8 GB physical range is unassigned | G `lga-base.dtsi` `memory@80000000`, `lga-rmem.dtsi` (`pkvm_smmu_v3_prot_reg@100000000`) |
@@ -89,7 +89,7 @@ fastboot boot xnu-frankel.img            (RAM only: nothing is written to the ph
 | `shim.h`, `audit.py` | what `shim.c` offers `dpu.c`; the build-time audit of the shim's write paths (below) |
 | `font8x8.h` | the screen console's glyphs: Daniel Hepper's font8x8 (public domain) |
 | `fdt.c`, `memmap.c` | the device tree reader and the RAM map, host-tested (`make test`, on `tests/frankel-like.dts`) |
-| `qemu-test.sh`, `probe-test.sh` | the whole route in QEMU, no UEFI firmware anywhere; the probe's flow with RAM standing in for the display controller |
+| `qemu-test.sh`, `probe-test.sh` | the whole route in QEMU, no UEFI firmware anywhere (`QEMU_EXTRA` adds devices: a UFS disk, RAM where the display controller would be; `QEMU_CPU=max` the Armv9 features QEMU has); the probe's flow with RAM standing in for the display controller |
 
 The framebuffer, in this order: `scion.fb=BASE,WIDTH,HEIGHT,STRIDE` on the boot image's command line (ABL passes it on in
 `/chosen/bootargs`); a `simple-framebuffer` node, should ABL ever add one; else the display controller's enabled layer in
@@ -206,3 +206,10 @@ findings are cited where they are used.
 
 The shim, the configuration and this documentation: MIT (`LICENSE`). `dts/mainline/`: BSD-3-Clause, Google's (its
 README). `shim/font8x8.h`: public domain (Daniel Hepper's font8x8, from IBM's and Marcel Sondaar's public domain fonts). Google's GPL-2.0 kernel is a source of facts, named in each comment that uses one; none of its code is here.
+
+## The `cpu:` line
+
+The shim prints the boot core's identity and features before anything else (`dpu_cpu_report`): MIDR, `ID_AA64PFR0/1`, `ISAR1/2`, and
+`pauth addr/generic`, `bti`, `mte`, `sve`, `sme` as the ID registers say. In QEMU with `-cpu max` (11.1.3): `pauth addr 5 generic 1, bti 1, mte 1, sve 1, sme 2`.
+QEMU has no Cortex-A520, A725 or X4, and a machine's cores are all of one kind: `cortex-a710` (Armv9.0) is the nearest it offers. On the phone this
+line is the first thing the log says about its cores.

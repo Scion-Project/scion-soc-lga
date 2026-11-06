@@ -44,7 +44,7 @@ struct dpu_fb {
 	uint32_t width, height, pixels_per_line;
 };
 
-/* the CPU's pointer-authentication, BTI and MTE bits, once, at EL1 */
+/* the boot core's pointer-authentication, BTI, MTE, SVE and SME bits, once, as the shim starts */
 void dpu_cpu_report(void);
 /* the controller's identity, its output 0 and its layers, read only */
 void dpu_report(const char *when);

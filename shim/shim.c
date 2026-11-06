@@ -1156,6 +1156,7 @@ shim_main(const void *fdt)
 		halt("no device tree I can read");
 	}
 	say("shim: model %s, compatible %s\n", FI.model, FI.compatible);
+	dpu_cpu_report();
 	if (shim_entry_el != 2 && FI.psci_smc) {
 		/* nothing at EL2 is ours to pass PSCI on: the loader (psci_hvc) and the kernel would call into nothing */
 		say("shim: entered at EL1 with PSCI by SMC: platform_frankel.psci_hvc must be 0 for this (README.md)\n");
