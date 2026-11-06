@@ -37,10 +37,10 @@ MEM=${QEMU_MEM:-4G}
 
 qemu-system-aarch64 -M "$M,dumpdtb=$OUT/virt.dtb" -cpu "$CPU" -smp "$SMP" -m "$MEM" -display none >/dev/null
 dtc -q -I dtb -O dts "$OUT/virt.dtb" |
-	sed 's/^\tcompatible = "linux,dummy-virt";/\tcompatible = "scion,qemu-lga", "linux,dummy-virt";/' |
+	sed -e 's/^\tcompatible = "linux,dummy-virt";/\tcompatible = "scion,qemu-lga", "linux,dummy-virt";/' ${DTS_SED:+-e "$DTS_SED"} |
 	dtc -q -I dts -O dtb -o "$OUT/qemu-lga.dtb"
 
-python3 "$TOP/xnuloader/mkpayload.py" -o "$OUT/payload.bin" loader.efi="$L" kernel="$K" ramdisk="$RD" \
+python3 "$TOP/xnuloader/mkpayload.py" -o "$OUT/payload.bin" loader.efi="$L" kernel="$K" ramdisk="$RD" ${PAYLOAD_EXTRA:-} \
 	--cmdline "loader_return_after=$SECS epoch=$(date +%s) $*" >/dev/null
 UEFI_TARGET=frankel python3 "$TOP/mkxnuimg.py" --kernel-only -p "$OUT/payload.bin" -o "$OUT/Image"
 
