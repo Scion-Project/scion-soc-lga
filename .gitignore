@@ -5,3 +5,4 @@ shim/shim.bin
 shim/fdt-test
 shim/tests/*.dtb
 shim/out-qemu/
+shim/out-probe/

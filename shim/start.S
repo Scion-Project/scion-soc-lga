@@ -197,7 +197,7 @@ secondary_el2:
 	eret
 
 /*
- * EL2's vectors. From EL1 (AArch64, offset 0x400): an HVC is a PSCI or other SMCCC call, passed on to EL3 with SMC;
+ * EL2's vectors. From EL1 (AArch64, offset 0x400): an HVC is a PSCI or SMCCC architecture call, passed on to EL3 with SMC;
  * x0-x3 in and out as SMCCC says, x4-x17 the caller's to lose (the loader's and the kernel's psci_call say so). Anything
  * else taken to EL2 means something is trapped that should not be: the core stops there, with ESR_EL2 in x0 and
  * ELR_EL2 in x1 for a debugger (shim_el2_fault).
@@ -220,6 +220,23 @@ el2_sync_lower:
 	lsr	x10, x9, #26
 	cmp	x10, #0x16              /* HVC from AArch64 */
 	b.ne	el2_fault
+	/* only PSCI (0x84000000 + 0..31, 0xC4000000 + 0..31) and the SMCCC architecture calls (0x8000xxxx) go to EL3: a vendor
+	 * or SiP call, which is how storage or fuses could be reached from EL1, is answered NOT_SUPPORTED (-1) here */
+	mov	w10, #0xffe0
+	movk	w10, #0xffff, lsl #16
+	and	w11, w0, w10
+	movz	w10, #0x8400, lsl #16
+	cmp	w11, w10
+	b.eq	2f
+	movz	w10, #0xc400, lsl #16
+	cmp	w11, w10
+	b.eq	2f
+	lsr	w11, w0, #16
+	cmp	w11, #0x8000
+	b.eq	2f
+	mov	x0, #-1
+	eret
+2:
 	mov	w10, #(PSCI_CPU_ON_64 & 0xffff)
 	movk	w10, #(PSCI_CPU_ON_64 >> 16), lsl #16
 	cmp	w0, w10
