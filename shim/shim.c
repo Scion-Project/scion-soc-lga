@@ -28,6 +28,8 @@
 #include "efi.h"
 #include "fdt.h"
 #include "font8x8.h"
+#include "dpu.h"
+#include "shim.h"
 #include "memmap.h"
 
 #define PAYLOAD_BASE    0xF0000000ULL   /* xnuloader/loader.c: PAYLOAD_BASE, PAYLOAD_MAX_SIZE */
@@ -50,16 +52,6 @@
 #define WDT_CONTROL             0x08            /* bit 0 enable */
 #define WDT_KEY                 0x10            /* writes are taken only after the unlock key */
 #define WDT_KEY_UNLOCK          0x00C0FFEE      /* the tree's key-unlock */
-/* Tensor G5: the display controller (VeriSilicon DC9x00 at sswrp_dpu 0x0EC00000 + 0x200000) and its SMMUv3 */
-#define LGA_DPU                 0x0EE00000ULL
-#define DPU_L0_ADDRESS          0x01802C        /* layer 0's shadow registers (Google's vs_dc_reg_fe0.h) */
-#define DPU_L0_HIGH_ADDRESS     0x018030        /* bits 7:0 */
-#define DPU_L0_STRIDE           0x018044        /* bits 17:0 */
-#define DPU_L0_SIZE             0x01805C        /* width 15:0, height 31:16 */
-#define DPU_L0_CONFIG           0x018088        /* enable 0:0, format 29:24 (0: A8R8G8B8) */
-#define DPU_LAYER_STEP          0x004000        /* layer 1 at 0x01C088 ... */
-#define LGA_DPU_SMMU            0x0ED80000ULL
-#define SMMU_CR0                0x20            /* bit 0 SMMUEN: 0, the DPU reads physical addresses */
 
 extern uint64_t shim_entry_el;
 extern uint64_t shim_el2_fault[4];
@@ -71,7 +63,30 @@ static const void *FDT;
 static uint64_t image_base, image_bytes;        /* the shim and its payload, where the boot loader put them */
 
 static inline uint32_t rd32(uint64_t a) { return *(volatile uint32_t *)(uintptr_t)a; }
-static inline void wr32(uint64_t a, uint32_t v) { *(volatile uint32_t *)(uintptr_t)a = v; }
+
+static int wdt_stores_ok;       /* set by lga_watchdogs(): a probe run never stops them */
+static int kick_on;             /* scion.kick=1: each stage and each line of the console starts a frame (dpu.h) */
+
+/*
+ * The one way a store reaches a device. What the shim may write: the display controller's two frame-start registers,
+ * the console UART, and the watchdogs' enable and key, the last only after lga_watchdogs() allows it. A store to
+ * anything else is refused and said: there is no path from here to storage, fuses or the UFS host, and audit.py
+ * (run by the Makefile) fails the build if one appears.
+ */
+int
+mmio_write32(uint64_t a, uint32_t v)
+{
+	int ok = a == LGA_DPU + DPU_OUT0_START || a == LGA_DPU + DPU_OUT0_SW_CONFIG ||
+	    (FI.uart.kind != UART_NONE && a >= FI.uart.base && a < FI.uart.base + 0x100) ||
+	    (wdt_stores_ok && (a == LGA_WDT0 + WDT_CONTROL || a == LGA_WDT0 + WDT_KEY || a == LGA_WDT1 + WDT_CONTROL ||
+	    a == LGA_WDT1 + WDT_KEY));
+	if (!ok) {
+		say("shim: store to %x refused\n", a);
+		return -1;
+	}
+	*(volatile uint32_t *)(uintptr_t)a = v;
+	return 0;
+}
 
 /* ------------------------------------------------------------------------ */
 /* Small helpers (freestanding: the compiler may call memcpy and memset)      */
@@ -181,6 +196,7 @@ bootarg(const char *key)
 static char logbuf[16384];
 static uint32_t loglen;
 static void screen_putc(char c);
+static int is_lga(void);
 
 static void
 putc_(char c)
@@ -192,16 +208,16 @@ putc_(char c)
 	if (FI.uart.kind == UART_PL011) {
 		for (int i = 0; i < 100000 && (rd32(FI.uart.base + 0x18) & (1u << 5)); i++) {
 		}
-		wr32(FI.uart.base, (uint8_t)c);
+		mmio_write32(FI.uart.base, (uint8_t)c);
 	} else if (FI.uart.kind == UART_16550) {
 		uint64_t lsr = FI.uart.base + (5ULL << FI.uart.shift);
 		for (int i = 0; i < 100000 && !(rd32(lsr) & (1u << 5)); i++) {
 		}
-		wr32(FI.uart.base, (uint8_t)c);
+		mmio_write32(FI.uart.base, (uint8_t)c);
 	}
 }
 
-static void
+void
 say(const char *fmt, ...)
 {
 	va_list ap;
@@ -274,6 +290,7 @@ static void __attribute__((noreturn))
 halt(const char *why)
 {
 	say("shim: %s: restarting in 10 s\n", why);
+	ring_flush();
 	uint64_t f = 0, t0 = 0, t;
 	__asm__ volatile ("mrs %0, cntfrq_el0; mrs %1, cntpct_el0" : "=r" (f), "=r" (t0));
 	do {
@@ -412,6 +429,29 @@ inval_dcache(uint64_t start, uint64_t end)
 	uint64_t line = dline();
 	for (uint64_t a = start & ~(line - 1); a < end; a += line) {
 		__asm__ volatile ("dc ivac, %0" : : "r" (a) : "memory");
+	}
+	__asm__ volatile ("dsb sy" : : : "memory");
+}
+
+/*
+ * The log so far, as one of Linux's persistent RAM buffers ("DBGC", start, size, the bytes: loader's log.c, fs/pstore/ram_core.c)
+ * in ramoops' console zone: a hung or restarted phone leaves it for Android's pstore to show as console-ramoops-0. Plain, as the
+ * tree's ramoops node has no ECC size (guess: unverified on a phone); whether a restart keeps the RAM is checklist 11 in README.md.
+ */
+void
+ring_flush(void)
+{
+	uint32_t *h = (uint32_t *)(uintptr_t)LGA_RAMOOPS_CONSOLE;
+	if (!is_lga() || !memmap_in_ram(&MM, LGA_RAMOOPS_CONSOLE, LGA_RAMOOPS_CONSOLE_MAX)) {
+		return;
+	}
+	memcpy(h + 3, logbuf, loglen);
+	h[0] = 0x43474244;      /* "DBGC" */
+	h[1] = 0;
+	h[2] = loglen;
+	uint64_t line = dline(), end = LGA_RAMOOPS_CONSOLE + 12 + loglen;
+	for (uint64_t a = LGA_RAMOOPS_CONSOLE & ~(line - 1); a < end; a += line) {
+		__asm__ volatile ("dc civac, %0" : : "r" (a) : "memory");
 	}
 	__asm__ volatile ("dsb sy" : : : "memory");
 }
@@ -819,6 +859,7 @@ lga_watchdogs(void)
 	static const uint64_t wdt[2] = { LGA_WDT0, LGA_WDT1 };
 	const char *keep = bootarg("scion.wdt=");
 
+	wdt_stores_ok = 1;
 	for (int i = 0; i < 2; i++) {
 		uint32_t id = rd32(wdt[i] + WDT_ID), ctl = rd32(wdt[i] + WDT_CONTROL);
 		say("shim: watchdog %d at %x: id %x control %x", (uint64_t)i, wdt[i], (uint64_t)id, (uint64_t)ctl);
@@ -826,9 +867,9 @@ lga_watchdogs(void)
 			say("%s\n", (ctl & 1) ? " (left running)" : "");
 			continue;
 		}
-		wr32(wdt[i] + WDT_KEY, WDT_KEY_UNLOCK);
-		wr32(wdt[i] + WDT_CONTROL, ctl & ~1u);
-		wr32(wdt[i] + WDT_KEY, 0);
+		mmio_write32(wdt[i] + WDT_KEY, WDT_KEY_UNLOCK);
+		mmio_write32(wdt[i] + WDT_CONTROL, ctl & ~1u);
+		mmio_write32(wdt[i] + WDT_KEY, 0);
 		say(" -> %x\n", (uint64_t)rd32(wdt[i] + WDT_CONTROL));
 	}
 }
@@ -929,6 +970,9 @@ screen_glyph(uint32_t cx, uint32_t cy, char c)
 static void
 screen_newline(void)
 {
+	if (kick_on && con_on) {
+		dpu_kick(25);
+	}
 	con_x = 0;
 	con_y += 8 * CON_SCALE;
 	if (con_y + 8 * CON_SCALE > GOP_INFO.height) {
@@ -987,6 +1031,11 @@ stage(int n, uint32_t rgb)
 		for (uint32_t x = 16; x < 16 + w; x++) {
 			row[x] = rgb;
 		}
+	}
+	say("shim: stage %d\n", (uint64_t)n);
+	ring_flush();
+	if (kick_on) {
+		dpu_kick(25);
 	}
 }
 
@@ -1089,6 +1138,7 @@ load_pe(const uint8_t *pe, uint32_t len)
 void
 shim_el1_fault(uint64_t esr, uint64_t elr, uint64_t far, uint64_t kind)
 {
+	kick_on = 0;            /* the display controller may be what faulted */
 	say("\nshim: exception %d at EL1: ESR %x ELR %x FAR %x\n", kind, esr, elr, far);
 	halt("stopped");
 }
@@ -1106,6 +1156,7 @@ shim_main(const void *fdt)
 		halt("no device tree I can read");
 	}
 	say("shim: model %s, compatible %s\n", FI.model, FI.compatible);
+	dpu_cpu_report();
 	if (shim_entry_el != 2 && FI.psci_smc) {
 		/* nothing at EL2 is ours to pass PSCI on: the loader (psci_hvc) and the kernel would call into nothing */
 		say("shim: entered at EL1 with PSCI by SMC: platform_frankel.psci_hvc must be 0 for this (README.md)\n");
@@ -1127,7 +1178,11 @@ shim_main(const void *fdt)
 		{ PAYLOAD_BASE, PAYLOAD_MAX, 0 },
 	};
 	memmap_build(&MM, &FI, extra, 3);
-	if (is_lga()) {
+	const char *probe = bootarg("scion.probe=");
+	const char *kick = bootarg("scion.kick=");
+	int want_kick = kick && *kick == '1';
+	kick_on = want_kick && !probe && is_lga();      /* a probe run starts frames only where it says so */
+	if (is_lga() && !probe) {
 		lga_watchdogs();
 	}
 	find_framebuffer();
@@ -1176,6 +1231,25 @@ shim_main(const void *fdt)
 	}
 
 	screen_console_on();
+	if (probe) {
+		/* no payload, no loader, no watchdog touched: the display, a few seconds, the picture held, a restart */
+		if (!have_fb || !is_lga()) {
+			halt("probe: no framebuffer, or not a Tensor G5");
+		}
+		struct dpu_fb fb = { GOP_MODE.fb_base, GOP_INFO.width, GOP_INFO.height, GOP_INFO.pixels_per_scanline };
+		dpu_probe(&fb, want_kick);
+		uint64_t secs = parse_num(&probe), f, t0, t;
+		__asm__ volatile ("mrs %0, cntfrq_el0; mrs %1, cntpct_el0" : "=r" (f), "=r" (t0));
+		say("shim: probe done, the picture is held for %d s, then the phone restarts\n", secs ? secs : 8);
+		ring_flush();
+		do {
+			__asm__ volatile ("mrs %0, cntpct_el0" : "=r" (t));
+		} while (f != 0 && t - t0 < (secs ? secs : 8) * f);
+		psci(PSCI_SYSTEM_RESET, 0, 0, 0);
+		for (;;) {
+			__asm__ volatile ("wfe");
+		}
+	}
 	stage(0, 0x000000ff);   /* blue: the shim runs, the MMU is on */
 
 	if (payload_bytes == 0 || payload_bytes > PAYLOAD_MAX) {

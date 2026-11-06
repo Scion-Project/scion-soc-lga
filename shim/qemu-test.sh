@@ -13,6 +13,7 @@
 #      QEMU_MACHINE (virt,virtualization=on,gic-version=4; virt,gic-version=3 enters the shim at EL1, QEMU answering PSCI),
 #      SHIM_ARGS: the boot loader's command line as the shim reads it (/chosen/bootargs), e.g. a framebuffer in RAM:
 #      SHIM_ARGS=scion.fb=0x100000000,1080,2424,4320 (nothing shows it, but the console, the GOP and XNU's display run;
+#      QEMU_EXTRA: more arguments for QEMU (a UFS disk, memory where a device would be), split at spaces;
 #      QEMU_MONITOR=SOCKET, a Unix socket for the monitor, whose pmemsave takes a picture of it).
 #      The run ends after SECS (loader_return_after=): the loader writes its log and resets, which ends QEMU (-no-reboot).
 set -e
@@ -36,16 +37,17 @@ MEM=${QEMU_MEM:-4G}
 
 qemu-system-aarch64 -M "$M,dumpdtb=$OUT/virt.dtb" -cpu "$CPU" -smp "$SMP" -m "$MEM" -display none >/dev/null
 dtc -q -I dtb -O dts "$OUT/virt.dtb" |
-	sed 's/^\tcompatible = "linux,dummy-virt";/\tcompatible = "scion,qemu-lga", "linux,dummy-virt";/' |
+	sed -e 's/^\tcompatible = "linux,dummy-virt";/\tcompatible = "scion,qemu-lga", "linux,dummy-virt";/' ${DTS_SED:+-e "$DTS_SED"} |
 	dtc -q -I dts -O dtb -o "$OUT/qemu-lga.dtb"
 
-python3 "$TOP/xnuloader/mkpayload.py" -o "$OUT/payload.bin" loader.efi="$L" kernel="$K" ramdisk="$RD" \
+python3 "$TOP/xnuloader/mkpayload.py" -o "$OUT/payload.bin" loader.efi="$L" kernel="$K" ramdisk="$RD" ${PAYLOAD_EXTRA:-} \
 	--cmdline "loader_return_after=$SECS epoch=$(date +%s) $*" >/dev/null
 UEFI_TARGET=frankel python3 "$TOP/mkxnuimg.py" --kernel-only -p "$OUT/payload.bin" -o "$OUT/Image"
 
 MON=(-monitor none)
+EXTRA=(${QEMU_EXTRA:-})
 [ -n "${QEMU_MONITOR:-}" ] && MON=(-monitor "unix:$QEMU_MONITOR,server=on,wait=off")
 echo "qemu-test.sh: -M $M -cpu $CPU -smp $SMP -m $MEM; boot-args: loader_return_after=$SECS $*${SHIM_ARGS:+; for the shim: $SHIM_ARGS}"
 timeout $((SECS + 90)) qemu-system-aarch64 -M "$M" -cpu "$CPU" -smp "$SMP" -m "$MEM" \
 	-kernel "$OUT/Image" -dtb "$OUT/qemu-lga.dtb" -append "${SHIM_ARGS:-}" \
-	-display none -serial stdio "${MON[@]}" -no-reboot 2>&1 || true
+	-display none -serial stdio "${MON[@]}" "${EXTRA[@]}" -no-reboot 2>&1 || true

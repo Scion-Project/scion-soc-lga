@@ -37,9 +37,9 @@ at `6f689be7fa23` (GPL-2.0: **read for facts, nothing copied**), paths below `pr
 | Oscillator | 38.4 MHz | M `lga-pixel-common.dtsi` `&osc` |
 | UART | a DesignWare APB UART (`google,lga-uart`, `snps,dw-apb-uart`; 16550-style, reg-shift 2, 32-bit), 0x0DB62000, 200 MHz, SPI 688. `disabled` in the tree: the boot loader enables it when its console is on. Android's console: `earlycon=uart8250,mmio32,0xdb62000`, 115200 8N1. Not a PL011: xnuloader's UART is not it | M `lga.dtsi` `serial@db62000`, commit message of `54edd8698bb1`; G `lga-lsio.dtsi`, `lga-chosen.dtsi` |
 | Watchdogs | two Google watchdogs, `google,wdt`: 0x200C4000 (24 s, a FIQ to EL3) and 0x200C5000 (30 s, the GDMC restarts the SoC). ID register 0x00 reads 0x574454 ("WDT"); control 0x08 (bit 0 enable); a write is taken after the key 0x00C0FFEE at 0x10, locked again with 0 | G `lga-base.dtsi` `watchdog_cl0/cl1`; `google-modules/soc/rdo/watchdog/google_wdt.c`, `google_wdt_local.h` |
-| Display controller | VeriSilicon DC9x00 at 0x0EE00000 (`sswrp_dpu` 0x0EC00000 + 0x200000, 1.1 MB); it reads through an SMMUv3 at 0x0ED80000. Layer 0's shadow registers: address +0x1802C (high byte +0x18030), stride +0x18044, size +0x1805C (width 15:0, height 31:16), config +0x18088 (enable bit 0, format 29:24, 0 = A8R8G8B8); the next layer 0x4000 on; output 0's start +0xB6000. Synopsys DSI2 host 0x0EFD8000, C/D-PHY 0x0EFC0000 | G `lga-dpu.dtsi`, `lga-smmu.dtsi`; `google-modules/display/vsi-drm/verisilicon/9x00/vs_dc_reg_fe0.h`, `vs_dc_hw.c` (`plane_set_fb`), `vs_dc_reg_be.h` |
+| Display controller | VeriSilicon DC9x00 at 0x0EE00000 (`sswrp_dpu` 0x0EC00000 + 0x200000, 1.1 MB); it reads through an SMMUv3 at 0x0ED80000. Layer 0's shadow registers: address +0x1802C (high byte +0x18030), stride +0x18044, size +0x1805C (width 15:0, height 31:16), config +0x18088 (enable bit 0, format 29:24, 0 = A8R8G8B8); the next layer 0x4000 on; output 0's start +0xB6000, its software panel start +0xB6004, the DSI 0 frame counter +0xB6434. Synopsys DSI2 host 0x0EFD8000, C/D-PHY 0x0EFC0000 | G `lga-dpu.dtsi`, `lga-smmu.dtsi`; `google-modules/display/vsi-drm/verisilicon/9x00/vs_dc_reg_fe0.h`, `vs_dc_hw.c` (`plane_set_fb`), `vs_dc_reg_be.h` |
 | Boot framebuffer | **not in any tree** (no `simple-framebuffer`, no splash region): wherever the boot loader put it. The shim finds it (below) | M, G: absent |
-| UFS | Google's host, `google,ufshc`: 0x3C400000 (HCI), 0x3C410000 (top), 0x3C700000 (PHY SRAM); behind an SMMUv3 (`inf_smmu`, identity-mapped); the boot device (`androidboot.boot_devices=3c400000.ufs`). Its rails come from the PMIC through the CPM's mailbox. The boot loader demands a `ufs0` node in its tree to add calibration to | G `lga-base.dtsi` `ufs@3c400000`, `lga-chosen.dtsi`; LKML, v1 of the mainline series |
+| UFS | Google's host, `google,ufshc`: 0x3C400000 (HCI), 0x3C410000 (top), 0x3C700000 (PHY SRAM); behind an SMMUv3 (`inf_smmu`, identity-mapped); the boot device (`androidboot.boot_devices=3c400000.ufs`). Its rails come from the PMIC through the CPM's mailbox. The boot loader demands a `ufs0` node in its tree to add calibration to. A UFSHCI 4.0 host with Google's own top block (version, card detect at +0x0/+0x4, the M-PHY firmware source in PWR_CTRL +0x100: ROM or the patched SRAM image, `google,phy-patching-mode = <2>`) that Google's driver runs in single doorbell mode (CONFIG.QT, +0x300) or with 16 queues (MCQ), 36-bit DMA whatever CAP says, initiator id 1 in every command UPIU, `AWUSER`/`ARUSER` virtual channel 1 (a TODO in its source). Its own bring-up: power domains and the PMIC's rails by the CPM, the reset GPIO, the reference clock, 125 KB of M-PHY firmware, calibration: none in this tree, so the kernel takes the host as ABL left it, read only (`hakios.ufshc.c`, entry `lga`). Whether ABL leaves it up: unknown | G `lga-base.dtsi` `ufs@3c400000`, `lga-chosen.dtsi`; G `private/google-modules/soc/rdo/drivers/ufs/` (`ufs-google.c`, `lga/ufs-platform.h`, `lga/ufs-regs-gen.h`) and `aosp/include/ufs/ufshcd.h` (the two quirks); LKML, v1 of the mainline series |
 | PMIC | Dialog/Renesas DA9188 (main) and DA9189 (sub) "AP-PMICs", driven through the CPM (Google's power manager) by mailbox (`mba-dest-channel`), not by the AP's own bus | G `lga-ap-pmic.dtsi` |
 | GPU | Imagination PowerVR DXT-48-1536 | G `google-modules/powervr`; Phoronix |
 | RAM | LPDDR5X from 0x80000000; the boot loader writes the `/memory` banks. The 4-8 GB physical range is unassigned | G `lga-base.dtsi` `memory@80000000`, `lga-rmem.dtsi` (`pkvm_smmu_v3_prot_reg@100000000`) |
@@ -85,9 +85,11 @@ fastboot boot xnu-frankel.img            (RAM only: nothing is written to the ph
 |---|---|
 | `start.S` | the arm64 Image header; self-relocation; EL2 set up (HCR_EL2.RW, API/APK where there is pointer authentication; the timer and the GIC's system registers open to EL1; FP/SVE, debug, fine-grained traps and HCRX cleared) and the drop to EL1; EL2's vectors: HVC is passed on to EL3 by SMC, CPU_ON rewritten so the firmware starts the core at `secondary_el2`, which enters the caller's entry point at EL1 |
 | `shim.c` | at EL1: the tree read, a 1:1 map (RAM cacheable in 2 MB blocks, `no-map` regions and everything else as devices', the framebuffer normal non-cacheable), the UEFI system table (pages, pool, memory map, Graphics Output, stall, PSCI reset, a console on the tree's UART **and on the screen**, the tree as a configuration table), the PE32+ loader for `loader.efi`; on a Tensor G5 the watchdogs and the framebuffer |
+| `dpu.c`, `dpu.h` | the display controller: its identity and output 0 read and reported, one frame started (START, then SW_CONFIG) and the frame counter read back, the probe run's bands; the offsets are Google's, read from source |
+| `shim.h`, `audit.py` | what `shim.c` offers `dpu.c`; the build-time audit of the shim's write paths (below) |
 | `font8x8.h` | the screen console's glyphs: Daniel Hepper's font8x8 (public domain) |
 | `fdt.c`, `memmap.c` | the device tree reader and the RAM map, host-tested (`make test`, on `tests/frankel-like.dts`) |
-| `qemu-test.sh` | the whole route in QEMU, no UEFI firmware anywhere |
+| `qemu-test.sh`, `probe-test.sh` | the whole route in QEMU, no UEFI firmware anywhere (`QEMU_EXTRA` adds devices: a UFS disk, RAM where the display controller would be; `QEMU_CPU=max` the Armv9 features QEMU has); the probe's flow with RAM standing in for the display controller |
 
 The framebuffer, in this order: `scion.fb=BASE,WIDTH,HEIGHT,STRIDE` on the boot image's command line (ABL passes it on in
 `/chosen/bootargs`); a `simple-framebuffer` node, should ABL ever add one; else the display controller's enabled layer in
@@ -99,6 +101,47 @@ own (`-v`) takes the screen; `scion.con=0` turns it off. The framebuffer is rese
 mapped normal non-cacheable, as UEFI maps a GOP's.
 
 The watchdogs: stopped as Google's driver stops them, if their ID register says they are; `scion.wdt=keep` leaves them be.
+
+### What the shim may write: `mmio_write32` and `audit.py`
+
+Every store to a device goes through `mmio_write32` in `shim.c`, which takes three kinds and refuses (and says) the rest: the
+display controller's two frame-start registers (`OUTPUT0_START`, `OUTPUT0_SW_CONFIG`), the console UART, and the watchdogs'
+enable and key, the last only once `lga_watchdogs()` has allowed them (never in a probe run). EL2's HVC forwarder passes on to
+EL3 only PSCI (0x84000000 and 0xC4000000, functions 0 to 31) and the SMCCC architecture calls (0x8000xxxx): any other function number,
+the way a vendor or SiP call could reach storage, is answered NOT_SUPPORTED without leaving EL2. The shim offers no block I/O,
+so the loader finds no partition to write its log to.
+
+`audit.py` runs in `make` before `shim.elf` links (`make audit`; `make audit-test` shows it refusing a store to the UFS host's
+address) and fails the build on: a store through a device pointer anywhere but `mmio_write32`; a volatile pointer other than the
+framebuffer's `row`; a store in inline assembly; the name of storage, the UFS host or fuses, or a block I/O protocol in code;
+an SMC outside `psci()` and the EL2 forwarder's checked path; a `psci()` call with anything but a PSCI function number. It reads
+text: it catches a slip, not an adversary. The image's side (kernel configuration, command line) is
+[scion-frankel's `audit-image.py`](https://github.com/Scion-Project/scion-frankel). The model is PixOS's `docs/SAFETY.md`, read, not copied.
+
+### The display probe (`scion.probe=HOLD`, `scion.kick=1`)
+
+The first unknown on a Pixel 10 is whether a command-mode panel behind a DC9x00 shows what is written to ABL's buffer, and if it needs
+a frame started, whether starting one the way Google's driver does works. What is known and what is a guess is in
+[docs/pixel10-bringup.md](https://github.com/Scion-Project/scion-kernel/blob/main/docs/pixel10-bringup.md) ("What Google's driver says").
+A probe image runs the shim alone (no payload, loader or kernel; the watchdogs left as ABL has them, so a hang ends by itself):
+
+1. reads and logs the CPU's pointer-authentication, BTI and MTE bits, the controller's chip, revision, customer and product ids
+   (Google's table: 0x9400, 0x7002, 0x32A, 0x02094000), output 0's START, SW_CONFIG, work mode (bit 1: 1 = command) and clock
+   enable, the back end's interrupt enable and status, **the DSI 0 frame counter**, and the SMMU's CR0;
+2. paints a **blue** band (y 1200), waits 2 s, logs again; paints **yellow**, waits 2 s, logs;
+3. paints **green**, and with `scion.kick=1` starts one frame (START, then SW_CONFIG, as Google's `dc_hw_start_trigger` does
+   for a command-mode output that is not in auto mode), waits up to 100 ms for the counter, waits 2 s, logs;
+4. paints **white** (never sent), waits 2 s, logs, holds the picture `HOLD` seconds (8 if 0), writes the log to the RAM ring and
+   restarts through PSCI.
+
+The panel shows the bands that were in the buffer when its last frame was sent: nothing new, or blue and yellow only, or blue,
+yellow and green (the kick worked and was needed), or all four (frames flow without a kick, so ABL left the output running).
+The console's own lines are in the buffer too, and appear with the frame. The log goes to the UART, the screen and **the RAM
+ring**: ramoops' console zone (0x95200000, a persistent-RAM buffer "DBGC", plain: the tree's node has no ECC size; whether
+a restart keeps the RAM is checklist 11), which Android shows as `/sys/fs/pstore/console-ramoops-0` (root).
+
+In a full run, `scion.kick=1` starts a frame at each stage band and each console line (the loader's banner reaches the panel); it
+does not keep the picture fresh once the kernel runs: a kernel driver for the DC9x00 does not exist yet.
 
 ### What QEMU checks
 
@@ -114,6 +157,9 @@ GIC, cores and PSCI path at QEMU's addresses. Seen (2026-10-29, QEMU 11.1.2):
 | `-cpu max` (pointer authentication, fine-grained traps, HCX), `cpus=8 bootcpu=7` | the same: launchd, the return, the reset |
 | `virt,gic-version=3` (the shim entered at EL1), `cpus=4 bootcpu=1` | the same, PSCI answered by QEMU |
 | `scion.fb=` a framebuffer in guest RAM, the loader's self-test (`--checkpoint 999`), RAM in a file | the screen as the phone's would be: [`shim/tests/qemu-screen.png`](shim/tests/qemu-screen.png), the three bands, the shim's and the loader's lines, the kernel's return |
+
+`shim/probe-test.sh`: the probe built with the controller's address in RAM, in a 6 GB machine whose tree says `google,lga`: the sequence, the
+bands, the refused-store path, the ring, the restart. Nothing counts frames there, so the kick reports "did not move".
 
 What QEMU cannot check: QEMU numbers its cores in Aff0 whatever `-smp` says, so the Pixel's Aff1 numbering is not
 exercised here (xnuloader's `core_shift = 8`, the POCO's, is); nor anything of the phone itself, ABL above all.
@@ -131,7 +177,7 @@ the loader or the kernel prints, on the UART and on the screen.
 | 3 | the RAM and reservations as the tree says | `shim: RAM 0x80000000 + ...`, `0x880000000 + ...`; the free blocks | `/memory` empty: ABL's tree is not what this expects |
 | 4 | the watchdogs stopped | `watchdog 0 ... id 0x574454 control ... -> ...` (bit 0 clear) | the phone restarts after 24 or 30 s: pet them instead |
 | 5 | the framebuffer | `framebuffer 1080 x 2424 at ...`; the bands and the console on the screen | the DPU's layers printed (UART): `scion.fb=`; an SMMU on (CR0 bit 0): its tables, next steps |
-| 6 | a write reaches the panel | the bands show at all | command mode: start a frame (`OUTPUT0_START`), next steps |
+| 6 | a write reaches the panel | the bands show at all | command mode: `scion.kick=1` starts a frame (`OUTPUT0_START`, `OUTPUT0_SW_CONFIG`); the probe says which of the two it was |
 | 7 | the loader finds the phone | `platform frankel, GICv3`, `CurrentEL=1` | `platform qemu-virt`: the tree's compatible is not `google,lga-frankel` |
 | 8 | the timer | `CNTFRQ=38400000` (inferred; whatever it is, the loader uses it) | `CNTFRQ=0`: `platform_frankel.timer_hz` |
 | 9 | the GIC | `gic: v3, ... cpu 0's redistributor ...` | a panic `no redistributor for MPIDR`: the frames' layout |
@@ -160,3 +206,10 @@ findings are cited where they are used.
 
 The shim, the configuration and this documentation: MIT (`LICENSE`). `dts/mainline/`: BSD-3-Clause, Google's (its
 README). `shim/font8x8.h`: public domain (Daniel Hepper's font8x8, from IBM's and Marcel Sondaar's public domain fonts). Google's GPL-2.0 kernel is a source of facts, named in each comment that uses one; none of its code is here.
+
+## The `cpu:` line
+
+The shim prints the boot core's identity and features before anything else (`dpu_cpu_report`): MIDR, `ID_AA64PFR0/1`, `ISAR1/2`, and
+`pauth addr/generic`, `bti`, `mte`, `sve`, `sme` as the ID registers say. In QEMU with `-cpu max` (11.1.3): `pauth addr 5 generic 1, bti 1, mte 1, sve 1, sme 2`.
+QEMU has no Cortex-A520, A725 or X4, and a machine's cores are all of one kind: `cortex-a710` (Armv9.0) is the nearest it offers. On the phone this
+line is the first thing the log says about its cores.
