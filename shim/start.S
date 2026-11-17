@@ -130,6 +130,21 @@ el2_setup:
 	b.eq	2f
 1:	orr	x9, x9, #(1 << 40)      /* APK */
 	orr	x9, x9, #(1 << 41)      /* API */
+	/*
+	 * Every core's EL1 keys the same (zero), whatever reset left in them: a kernel that does not turn the address keys on
+	 * (FRANKEL, the S9 layer's: SCTLR_EL1.EnIA/IB/DA/DB 0) still runs user space's PACGA, which has no enable bit and uses
+	 * APGAKey, and a value one core computed must check on another. A kernel that sets keys of its own overwrites these.
+	 */
+	msr	S3_0_C2_C1_0, xzr       /* APIAKeyLo_EL1 */
+	msr	S3_0_C2_C1_1, xzr       /* APIAKeyHi_EL1 */
+	msr	S3_0_C2_C1_2, xzr       /* APIBKeyLo_EL1 */
+	msr	S3_0_C2_C1_3, xzr       /* APIBKeyHi_EL1 */
+	msr	S3_0_C2_C2_0, xzr       /* APDAKeyLo_EL1 */
+	msr	S3_0_C2_C2_1, xzr       /* APDAKeyHi_EL1 */
+	msr	S3_0_C2_C2_2, xzr       /* APDBKeyLo_EL1 */
+	msr	S3_0_C2_C2_3, xzr       /* APDBKeyHi_EL1 */
+	msr	S3_0_C2_C3_0, xzr       /* APGAKeyLo_EL1 */
+	msr	S3_0_C2_C3_1, xzr       /* APGAKeyHi_EL1 */
 2:	msr	hcr_el2, x9
 	/* the physical counter and timer open to EL1, no offset for the virtual one, EL2's own timer off */
 	mov	x9, #3
