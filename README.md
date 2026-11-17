@@ -7,6 +7,11 @@ the **boot shim** that starts HakiOS on a Tensor G5 without a UEFI (`shim/`). Th
 common repository, [Scion-Project/scion-kernel](https://github.com/Scion-Project/scion-kernel), by
 `tools/hakios-device.py sync` (`socs/lga`, `devices/frankel`), as `devices/manifest.conf` names them.
 
+The shim starts both of Scion's kernels for these phones: the iOS 16.5 one (xnu-8796) and, since 17 November 2026, the iOS 27
+one, the machine configuration `FRANKEL` of [Scion-Project/xnu](https://github.com/Scion-Project/xnu), which shares one tree
+with the Galaxy S9's. Both have run in QEMU only (scion-kernel
+[docs/ios27/PIXEL10.md](https://github.com/Scion-Project/scion-kernel/blob/main/docs/ios27/PIXEL10.md)).
+
 > **Nothing here has run on a phone.** The shim, the loader's platform and the kernel's half are checked in QEMU (below)
 > and on the host; on a Pixel 10 they are untested. Running them needs an **unlocked boot loader, and unlocking a Pixel
 > wipes it** (`fastboot flashing unlock` erases all user data). Use a second phone, or decide on the wipe knowingly:
